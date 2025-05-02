@@ -1,0 +1,70 @@
+%%writefile mcm.cu
+#include <iostream>
+#include <vector>
+#include <climits>
+#include <cuda_runtime.h>
+
+// CUDA kernel to compute one layer of DP table
+__global__ void mcm_kernel(int* dp, int* dims, int n, int chain_len) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    int j = i + chain_len - 1;
+    if (i < n - chain_len + 1) {
+        int min_cost = INT_MAX;
+        for (int k = i; k < j; ++k) {
+            int cost = dp[i * n + k] + dp[(k + 1) * n + j] + dims[i] * dims[k + 1] * dims[j + 1];
+            if (cost < min_cost)
+                min_cost = cost;
+        }
+        dp[i * n + j] = min_cost;
+    }
+}
+
+void matrix_chain_cuda(const std::vector<int>& dims) {
+    int n = dims.size() - 1; // Number of matrices
+    int size = n * n * sizeof(int);
+    int* h_dp = new int[n * n];
+    int* d_dp, *d_dims;
+
+    // Initialize the DP table on host
+    for (int i = 0; i < n; ++i)
+        for (int j = 0; j < n; ++j)
+            h_dp[i * n + j] = (i == j) ? 0 : INT_MAX;
+
+    cudaMalloc(&d_dp, size);
+    cudaMalloc(&d_dims, (n + 1) * sizeof(int));
+
+    cudaMemcpy(d_dp, h_dp, size, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_dims, dims.data(), (n + 1) * sizeof(int), cudaMemcpyHostToDevice);
+
+    int threads = 256;
+
+    for (int len = 2; len <= n; ++len) {
+        int num_tasks = n - len + 1;
+        int blocks = (num_tasks + threads - 1) / threads;
+        mcm_kernel<<<blocks, threads>>>(d_dp, d_dims, n, len);
+        cudaDeviceSynchronize();
+    }
+
+    cudaMemcpy(h_dp, d_dp, size, cudaMemcpyDeviceToHost);
+
+    std::cout << "Minimum number of multiplications: " << h_dp[0 * n + n - 1] << std::endl;
+
+    // Clean up
+    cudaFree(d_dp);
+    cudaFree(d_dims);
+    delete[] h_dp;
+}
+
+int main() {
+    int m;
+    std::cout << "Enter number of matrices: ";
+    std::cin >> m;
+
+    std::vector<int> dims(m + 1);
+    std::cout << "Enter dimensions (space-separated, " << m + 1 << " values): ";
+    for (int i = 0; i <= m; ++i) std::cin >> dims[i];
+
+    matrix_chain_cuda(dims);
+    return 0;
+}
+

@@ -1,0 +1,53 @@
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from keras.models import Sequential
+from keras.layers import Dense
+from tensorflow.keras.utils import to_categorical
+# from keras.utils import to_categorical
+
+# Step 1: Load dataset
+url = "https://archive.ics.uci.edu/ml/machine-learning-databases/letter-recognition/letter-recognition.data"
+columns = ['letter', 'x-box', 'y-box', 'width', 'high', 'onpix', 'x-bar', 'y-bar', 
+           'x2bar', 'y2bar', 'xybar', 'x2ybr', 'xy2br', 'x-ege', 'xegvy', 'y-ege', 'yegvx']
+df = pd.read_csv(url, header=None, names=columns)
+
+# Step 2: Encode labels and normalize features
+X = df.drop('letter', axis=1).values
+y = df['letter'].values
+
+le = LabelEncoder()
+y_encoded = le.fit_transform(y)
+y_onehot = to_categorical(y_encoded, num_classes=26)
+
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+# Step 3: Train-test split
+X_train, X_test, y_train, y_test = train_test_split(X_scaled, y_onehot, test_size=0.2, random_state=42)
+
+# Step 4: Build the DNN model
+model = Sequential()
+model.add(Dense(64, input_shape=(16,), activation='relu'))
+model.add(Dense(128, activation='relu'))
+model.add(Dense(64, activation='relu'))
+model.add(Dense(26, activation='softmax'))  # 26 output classes
+
+# Step 5: Compile and train
+model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+history = model.fit(X_train, y_train, epochs=30, batch_size=64, validation_split=0.2)
+
+# Step 6: Evaluate
+loss, accuracy = model.evaluate(X_test, y_test)
+print(f"Test Loss: {loss:.4f}, Test Accuracy: {accuracy:.4f}")
+
+import matplotlib.pyplot as plt
+
+plt.plot(history.history['accuracy'], label='Train Acc')
+plt.plot(history.history['val_accuracy'], label='Val Acc')
+plt.title('Model Accuracy')
+plt.xlabel('Epoch')
+plt.ylabel('Accuracy')
+plt.legend()
+plt.show()

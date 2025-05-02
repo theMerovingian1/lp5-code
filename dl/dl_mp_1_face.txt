@@ -1,0 +1,58 @@
+import tensorflow as tf
+import numpy as np
+from sklearn.datasets import fetch_lfw_people
+from sklearn.model_selection import train_test_split
+from tensorflow.keras.applications.vgg16 import VGG16, preprocess_input
+from tensorflow.keras.utils import to_categorical
+import cv2
+import matplotlib.pyplot as plt
+# Load LFW dataset with minimum 20 images per person
+lfw_people = fetch_lfw_people(min_faces_per_person=20, resize=0.5)
+images = lfw_people.images
+labels = lfw_people.target
+label_names = lfw_people.target_names
+num_classes = len(label_names)
+
+print("Total samples:", images.shape[0])
+print("Image shape:", images.shape[1:])
+print("Number of classes:", num_classes)
+# Resize images to 224x224 RGB for VGG16
+resized_images = np.zeros((images.shape[0], 224, 224, 3), dtype='float32')
+
+for i in range(images.shape[0]):
+    img = cv2.cvtColor(images[i], cv2.COLOR_GRAY2RGB)
+    resized_images[i] = cv2.resize(img, (224, 224))
+ # Normalize with VGG16 preprocessing
+resized_images = preprocess_input(resized_images)
+ # Load pre-trained VGG16 (excluding top layer)
+vgg_model = VGG16(weights='imagenet', include_top=False, input_shape=(224, 224, 3))
+# Extract features from images
+features = vgg_model.predict(resized_images, verbose=1)
+features = features.reshape(features.shape[0], -1)  # Flatten features
+ # One-hot encode labels
+labels_cat = to_categorical(labels, num_classes)
+# Train-test split
+X_train, X_test, y_train, y_test = train_test_split(features, labels_cat, test_size=0.2, random_state=42)
+model = tf.keras.models.Sequential([
+tf.keras.layers.Dense(512, activation='relu', input_shape=(features.shape[1],)),
+tf.keras.layers.Dropout(0.5),
+tf.keras.layers.Dense(num_classes, activation='softmax')
+])
+model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+model.summary()
+history = model.fit(
+X_train, y_train,
+epochs=10,
+batch_size=32,
+validation_split=0.2
+)
+loss, accuracy = model.evaluate(X_test, y_test)
+print("✅Test Accuracy:", accuracy)
+plt.plot(history.history['accuracy'], label='Train')
+plt.plot(history.history['val_accuracy'], label='Validation')
+plt.xlabel("Epoch")
+plt.ylabel("Accuracy")
+plt.title("Training vs Validation Accuracy")
+plt.legend()
+plt.grid(True)
+plt.show()

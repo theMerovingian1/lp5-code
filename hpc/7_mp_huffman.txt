@@ -1,0 +1,112 @@
+%%writefile huffman.cu
+#include <iostream>
+#include <queue>
+#include <unordered_map>
+#include <cuda_runtime.h>
+#include <device_launch_parameters.h>
+
+#define MAX_CHAR 256
+#define N_THREADS 256
+
+using namespace std;
+
+// Huffman Tree Node
+struct Node {
+    char ch;
+    int freq;
+    Node *left, *right;
+    Node(char c, int f) : ch(c), freq(f), left(nullptr), right(nullptr) {}
+};
+
+// Compare frequency for min heap
+struct Compare {
+    bool operator()(Node* l, Node* r) {
+        return l->freq > r->freq;
+    }
+};
+
+// CUDA kernel to calculate frequency histogram
+__global__ void countFrequencies(unsigned char* data, int* freq, int size) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < size) {
+        atomicAdd(&freq[data[i]], 1);
+    }
+}
+
+// Generate Huffman Codes
+void generateCodes(Node* root, string str, unordered_map<char, string>& huffCode) {
+    if (!root) return;
+    if (!root->left && !root->right)
+        huffCode[root->ch] = str;
+    generateCodes(root->left, str + "0", huffCode);
+    generateCodes(root->right, str + "1", huffCode);
+}
+
+int main() {
+    string input;
+    cout << "Enter a string to encode with Huffman Compression: ";
+    getline(cin, input);
+
+    if (input.empty()) {
+        cerr << "Input string is empty. Exiting.\n";
+        return 1;
+    }
+
+    int n = input.length();
+
+    // Allocate device memory
+    unsigned char* d_data;
+    int* d_freq;
+    int h_freq[MAX_CHAR] = {0};
+
+    cudaMalloc((void**)&d_data, n * sizeof(unsigned char));
+    cudaMalloc((void**)&d_freq, MAX_CHAR * sizeof(int));
+    cudaMemcpy(d_data, input.c_str(), n * sizeof(unsigned char), cudaMemcpyHostToDevice);
+    cudaMemset(d_freq, 0, MAX_CHAR * sizeof(int));
+
+    // Launch kernel
+    int blocks = (n + N_THREADS - 1) / N_THREADS;
+    countFrequencies<<<blocks, N_THREADS>>>(d_data, d_freq, n);
+    cudaDeviceSynchronize();
+
+    // Copy results back
+    cudaMemcpy(h_freq, d_freq, MAX_CHAR * sizeof(int), cudaMemcpyDeviceToHost);
+
+    // Build Huffman Tree on CPU
+    priority_queue<Node*, vector<Node*>, Compare> pq;
+    for (int i = 0; i < MAX_CHAR; ++i) {
+        if (h_freq[i])
+            pq.push(new Node(i, h_freq[i]));
+    }
+
+    while (pq.size() > 1) {
+        Node* left = pq.top(); pq.pop();
+        Node* right = pq.top(); pq.pop();
+        Node* parent = new Node('\0', left->freq + right->freq);
+        parent->left = left;
+        parent->right = right;
+        pq.push(parent);
+    }
+
+    Node* root = pq.top();
+    unordered_map<char, string> huffCode;
+    generateCodes(root, "", huffCode);
+
+    // Output Huffman Codes
+    cout << "\nHuffman Codes:\n";
+    for (auto ch : huffCode)
+        cout << ch.first << ": " << ch.second << '\n';
+
+    // Encode
+    string encoded = "";
+    for (char c : input)
+        encoded += huffCode[c];
+
+    cout << "\nOriginal string: " << input;
+    cout << "\nEncoded string: " << encoded << "\n";
+    cout << "Compression Ratio (uncompressed:compressed) ≈ " << (input.length() * 8.0) / encoded.length() << "\n";
+
+    cudaFree(d_data);
+    cudaFree(d_freq);
+    return 0;
+}

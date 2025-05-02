@@ -1,0 +1,69 @@
+# !nvcc --version
+# !nvidia-smi
+# !nvcc -arch=sm_75 -O3 vec_add.cu -o vec_add
+# ./vec_add
+
+
+%%writefile vec_add.cu
+
+#include <iostream>
+#include <cuda_runtime.h>
+using namespace std;
+
+__global__ void add(int* A, int* B, int* C, int size) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid < size) {
+        C[tid] = A[tid] + B[tid];
+    }
+}
+
+void print(int* vector, int size) {
+    for (int i = 0; i < size; i++) {
+        cout << vector[i] << " ";
+    }
+    cout << endl;
+}
+
+int main() {
+    int N;
+    cout << "Enter vector size: ";
+    cin >> N;
+
+    size_t bytes = N * sizeof(int);
+    int* A = new int[N];
+    int* B = new int[N];
+    int* C = new int[N];
+
+    cout << "Enter elements of vector A:\n";
+    for (int i = 0; i < N; ++i) cin >> A[i];
+
+    cout << "Enter elements of vector B:\n";
+    for (int i = 0; i < N; ++i) cin >> B[i];
+
+    int *d_A, *d_B, *d_C;
+    cudaMalloc(&d_A, bytes);
+    cudaMalloc(&d_B, bytes);
+    cudaMalloc(&d_C, bytes);
+
+    cudaMemcpy(d_A, A, bytes, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_B, B, bytes, cudaMemcpyHostToDevice);
+
+    int threads = 256;
+    int blocks = (N + threads - 1) / threads;
+    add<<<blocks, threads>>>(d_A, d_B, d_C, N);
+    cudaDeviceSynchronize();
+
+    cudaMemcpy(C, d_C, bytes, cudaMemcpyDeviceToHost);
+
+    cout << "Result vector (A + B): ";
+    print(C, N);
+
+    delete[] A;
+    delete[] B;
+    delete[] C;
+    cudaFree(d_A);
+    cudaFree(d_B);
+    cudaFree(d_C);
+
+    return 0;
+}

@@ -1,0 +1,143 @@
+# !nvcc --version
+# !nvidia-smi
+# !nvcc -arch=sm_75 -O3 matrix_mul.cu -o matrix_mul
+# ./matrix_mul
+
+%%writefile matrix_mult_int.cu -o matrix_mult_int
+#include <iostream>
+#include <cuda_runtime.h>
+#include <chrono>
+using namespace std;
+
+// CPU matrix multiplication
+void matMulCPU(int* A, int* B, int* C, int N) {
+    for (int row = 0; row < N; ++row) {
+        for (int col = 0; col < N; ++col) {
+            int sum = 0;
+            for (int k = 0; k < N; ++k) {
+                sum += A[row * N + k] * B[k * N + col];
+            }
+            C[row * N + col] = sum;
+        }
+    }
+}
+
+// GPU matrix multiplication kernel
+__global__ void matMulGPU(int* A, int* B, int* C, int N) {
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (row < N && col < N) {
+        int sum = 0;
+        for (int k = 0; k < N; ++k) {
+            sum += A[row * N + k] * B[k * N + col];
+        }
+        C[row * N + col] = sum;
+    }
+}
+
+// CUDA error check
+void checkCuda(cudaError_t err, const char* msg) {
+    if (err != cudaSuccess) {
+        cerr << "CUDA error at " << msg << ": " << cudaGetErrorString(err) << endl;
+        exit(EXIT_FAILURE);
+    }
+}
+
+// Matrix print utility
+void printMatrix(int* mat, int N, const string& name) {
+    cout << name << ":\n";
+    for (int i = 0; i < N * N; ++i)
+        cout << mat[i] << ((i + 1) % N == 0 ? "\n" : " ");
+    cout << endl;
+}
+
+int main() {
+    int N;
+    cout << "Enter matrix dimension N (NxN): ";
+    cin >> N;
+
+    if (N <= 0 || N > 1024) {
+        cerr << "Invalid matrix size. Must be between 1 and 1024." << endl;
+        return 1;
+    }
+
+    size_t size = N * N * sizeof(int);
+
+    // Allocate host memory
+    int* A = new int[N * N];
+    int* B = new int[N * N];
+    int* C_cpu = new int[N * N]{};
+    int* C_gpu = new int[N * N]{};
+
+    cout << "Enter elements of Matrix A (" << N*N << " integers):\n";
+    for (int i = 0; i < N * N; ++i) {
+        cin >> A[i];
+    }
+
+    cout << "Enter elements of Matrix B (" << N*N << " integers):\n";
+    for (int i = 0; i < N * N; ++i) {
+        cin >> B[i];
+    }
+
+    // CPU computation and timing
+    auto start_cpu = chrono::high_resolution_clock::now();
+    matMulCPU(A, B, C_cpu, N);
+    auto end_cpu = chrono::high_resolution_clock::now();
+    chrono::duration<double> cpu_duration = end_cpu - start_cpu;
+
+    // Allocate device memory
+    int *d_A, *d_B, *d_C;
+    checkCuda(cudaMalloc(&d_A, size), "cudaMalloc A");
+    checkCuda(cudaMalloc(&d_B, size), "cudaMalloc B");
+    checkCuda(cudaMalloc(&d_C, size), "cudaMalloc C");
+
+    checkCuda(cudaMemcpy(d_A, A, size, cudaMemcpyHostToDevice), "cudaMemcpy A");
+    checkCuda(cudaMemcpy(d_B, B, size, cudaMemcpyHostToDevice), "cudaMemcpy B");
+
+    // GPU computation and timing
+    dim3 threadsPerBlock(16, 16);
+    dim3 blocksPerGrid((N + 15) / 16, (N + 15) / 16);
+
+    auto start_gpu = chrono::high_resolution_clock::now();
+    matMulGPU<<<blocksPerGrid, threadsPerBlock>>>(d_A, d_B, d_C, N);
+    checkCuda(cudaGetLastError(), "Kernel launch");
+    checkCuda(cudaDeviceSynchronize(), "Kernel execution");
+    auto end_gpu = chrono::high_resolution_clock::now();
+
+    checkCuda(cudaMemcpy(C_gpu, d_C, size, cudaMemcpyDeviceToHost), "cudaMemcpy C");
+
+    chrono::duration<double> gpu_duration = end_gpu - start_gpu;
+
+    // Output results
+    printMatrix(A, N, "Matrix A");
+    printMatrix(B, N, "Matrix B");
+    printMatrix(C_cpu, N, "CPU Result");
+    printMatrix(C_gpu, N, "GPU Result");
+
+    // Validation
+    bool match = true;
+    for (int i = 0; i < N * N; ++i) {
+        if (C_cpu[i] != C_gpu[i]) {
+            match = false;
+            break;
+        }
+    }
+
+    cout << (match ? "✅ CPU and GPU results match.\n" : "❌ Results do NOT match!\n");
+
+    // Time
+    cout << "CPU Execution Time: " << cpu_duration.count() << " seconds\n";
+    cout << "GPU Execution Time: " << gpu_duration.count() << " seconds\n";
+
+    // Cleanup
+    delete[] A;
+    delete[] B;
+    delete[] C_cpu;
+    delete[] C_gpu;
+    cudaFree(d_A);
+    cudaFree(d_B);
+    cudaFree(d_C);
+
+    return 0;
+}
